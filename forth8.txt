@@ -1,0 +1,2261 @@
+
+
+	/ ** ORForth **
+	/ Definitions
+ZERO=	CLA		/    0
+ONE=	CLA IAC		/    1
+TWO=	CLA CLL CML RTL /    2
+NEG=	CMA IAC		/    Two's complement
+CAL=	CLA CLL
+
+MINUS1= CLA CMA		/   -1 or 4095
+MINUS2= CLA CMA CLL RAL /   -2 or 4094
+MINUS3= CLA CMA CLL RTL /   -3 or 4093
+
+*0
+	CLA
+	TLS		/ send null character to terminal to prepare it
+JMP	EXNV
+C40,	40		/ Space
+C100,	100
+C7000,	7000
+M25,	-25
+
+*20
+IP,     START	/ Instruction pointer
+SP,     S	/ Stack pointer
+RSP,    RS	/ Return stack pointer
+EVR,    0	/ Execution vector
+VL,	CARRYH	/ Last dictionary link
+DP,	DICTIONARY / Next dictionary addr
+
+REG6,	0
+REG8,   0
+REG10,  0
+REG12,  0
+REG14,	0
+
+STATE,  0       / -1 if compiling, zero otherwise
+TOIN,   0       / Pointer into text input
+FENCE,	40	/ Default fence is space
+ROWNO,	0
+COLNO,	0
+INSOVR,	-1	/ Start edit with insert
+
+PUSH8,	PUSH8R
+POP2,	POP2R	/ Pop Reg10 then Reg8 (was popA8)
+PUSH2,	PUSH2R	/ Push Reg8 then Reg10 (was push8A)
+POP3,	POP3R	/ Pop Reg 12 then Reg 10 then Reg 8 (was popCA8)
+PUSH3,	PUSH3R	/ Push Reg 8 then Reg 10 then Reg 12 (was push8AC)
+DOTQAUX, DOTQR
+TWIXTAUX, TWIXTR
+
+		/ Initialization constants
+SI,     S
+RSI,    RS
+		/ These constants appear as AND instructions
+C777,	777
+C7,	7
+C1000,	1000
+	
+		/ Inc IP
+INCIP,  0
+	ISZ	IP
+	CLA
+	JMP I	INCIP	/ Return with 0 in Acc
+
+		/ Inc SP
+INCSP,  0
+	ISZ	SP
+	CLA
+	JMP I   INCSP	/ Return with 0 in Acc
+
+		/ Dec SP
+DECSP,  0
+	MINUS1		/ Load -1
+	TAD     SP      / SP=SP-1
+	DCA     SP
+	CML		/ Set link to previous
+	JMP I   DECSP	/ Return with 0 in Acc
+
+		/ Inc RSP
+INCRSP, 0
+	ISZ	RSP
+	CLA
+	JMP I   INCRSP	/ Return with 0 in Acc
+
+		/ Dec SP
+DECRSP, 0
+	MINUS1		/ Load -1
+	TAD     RSP
+	DCA     RSP
+	JMP I   DECRSP	/ Exit with 0 in Acc
+	
+		/ Pop stack to Acc
+POP,    0
+	CLA
+	TAD I   SP      / Leave result in Acc
+	DCA     PUSH	/ Save arg in push return for tmp
+	JMS     INCSP
+	TAD     PUSH
+	JMP I   POP
+
+		/ Push Acc to stack
+PUSH,   0
+	DCA	POP	/ What to push is in Acc
+	JMS     DECSP	/ Save arg in pop return for tmp 
+	TAD	POP
+	DCA I   SP      / Push Acc to stack
+	JMP I   PUSH    / Return with 0 in Acc
+
+		/ Serout
+SEROUT, 0		/ Routine for sending a single character
+	TSF		/ Argument is in Acc
+	JMP .-1
+	TLS
+	CLA		/ Returns with 0 in Acc
+	JMP I   SEROUT
+
+		/ SerIn
+SERIN,  0		/ Routine for reading a single character
+	KSF
+	JMP     .-1
+	KRB		/ Result of input is in Acc
+	JMP I   SERIN
+
+		/ ExNV
+EXNV,   CLA
+	TAD I   IP      / Address at IP to EVR
+	DCA     EVR
+	ISZ     IP      / Point IP to next word address
+	JMP I   EVR	/ Go to word address
+			/   Acc is zero after jump
+
+		/ ExColon
+COLON,  JMS     DECRSP  / Push current IP to RS
+	TAD     IP
+	DCA I   RSP
+	TAD     EVR	/ Point IP to word after Colon
+	IAC
+	DCA	IP
+	JMP     EXNV
+
+		/ Jump: Jump routine
+JUMP,   CLA		/ Get the addr to jump to 
+	TAD I   IP
+	DCA     IP      / Store the addr to jump to in IP 
+	JMP     EXNV    
+
+		/ Jump TOS zero routine
+JUMPF=	.		/ Jump false
+JUMPZ,	JMS	POP
+	SNA
+	JMP	JUMP
+JUMPZ1,	JMS	INCIP
+	JMP	EXNV
+
+		/ Jump TOS nonzero routine
+JUMPT=	.
+JUMPNZ,	JMS	POP
+	SZA
+	JMP	JUMP
+	JMP	JUMPZ1
+
+		/ Jump TOS minus routine
+JUMPMI,	JMS	POP
+JMPMI1,	SPA
+	JMP	JUMP
+	JMP	JUMPZ1
+
+		/ Jump TOS GE 0 routine
+JUMPNM,	JMS	POP
+	CMA
+	JMP	JMPMI1
+
+PAGE
+
+	JMP	0
+		/ NR: Number runner routine: Number at IP to stack
+NR,     CLA
+	TAD I   IP
+	JMS     PUSH
+	JMS     INCIP
+	JMP     EXNV
+
+		/ PopA8: Pop Reg10 then Reg8
+POP2R, 0
+	JMS     POP
+	DCA     REG10   / Top of stack to R10
+	JMS     POP     / Result is in Acc
+	DCA     REG8    / Under top of stack to R8
+	JMP I   POP2R
+	
+		/ PopCA8: Pop Reg12 then Reg10 then Reg8
+POP3R, 0
+	JMS     POP     / Top of stack to R12
+	DCA     REG12
+	JMS I	POP2
+	JMP I   POP3R
+
+		/ Push8
+PUSH8R,	0
+	CLA
+	TAD     REG8
+	JMS     PUSH
+	JMP I   PUSH8R
+
+		/ Push8A: Push Reg8 then Reg10
+PUSH2R,	0
+	CLA
+	JMS I	PUSH8
+	TAD	REG10
+	JMS 	PUSH	/ R10 will be top of stack
+	JMP I   PUSH2R
+
+		/ Push8AC: Push Reg8 then Reg10 then Reg12
+PUSH3R, 0
+	JMS I	PUSH2	/ Push Reg8 then Reg10
+	TAD	REG12   / R12 will be top of stack
+	JMS 	PUSH
+	JMP I   PUSH3R
+	
+		/ SemiColon
+SEMIC,  CLA		/ Return address to IP
+	TAD I	RSP
+	DCA     IP      / Store return address in IP
+	JMS     INCRSP  / Update RSP
+	JMP     EXNV
+
+		/ Store
+STOREH, 1001
+	"!+1000		/ ! plus end of text flag
+	0		/ Link to prior head
+STORE,  JMS I	POP2	/ Top of stack in R10, value to store in R8
+	TAD     REG8    / Value to store into Acc
+	DCA I   REG10   / Store via R10
+	JMP     EXNV
+
+		/ At
+ATH,    1001
+	"@+1000
+	STOREH		/ Link to prior head
+AT,     JMS     POP     / Address to fetch from 
+	DCA     REG8
+	TAD I   REG8    / Fetch the value
+	JMS     PUSH    / The value to stack
+	JMP     EXNV
+
+		/ Swap
+SWAPH,  1004
+	"S;"W;"A;"P+1000
+	ATH		/ Link to prior head
+SWAP,   JMS     POP
+	DCA     REG8    / Top of stack to R8
+	JMS     POP
+	DCA     REG10
+	JMS I	PUSH2	/ Push first R8 then R10
+	JMP     EXNV
+
+		/ Dup
+DUPH,   1003
+	"D;"U;"P+1000
+	SWAPH
+DUP,    JMS	POP
+	DCA	REG8
+	TAD	REG8
+	JMS	PUSH
+	TAD	REG8
+	JMS	PUSH
+	JMP	EXNV
+
+		/ Over
+OVERH,  1004
+	"O;"V;"E;"R+1000
+	DUPH		/ Link to prior head
+OVER,   JMS I 	POP2	/ Top of stack to R10
+	JMS I	PUSH2	/ Push R8 then R10
+	JMS I	PUSH8	/ Push a copy of R8
+	JMP     EXNV
+
+		/ Rot
+ROTH,	1003
+	"R;"O;"T+1000
+	OVERH
+ROT,	JMS I	POP3	/ Top of stack to R12
+	TAD	REG10	/ Stack is R8 R10 R12
+	JMS  	PUSH
+	TAD	REG12
+	JMS  	PUSH
+	TAD	REG8
+	JMS  	PUSH
+	JMP	EXNV
+
+		/ Reverse ROT
+RROTH,	1004
+	"R;"R;"O;"T+1000
+	ROTH
+RROT,	JMP COLON
+	ROT
+	ROT
+	SEMIC
+
+		/ Drop
+DROPH,	1004
+	"D;"R;"O;"P+1000
+	RROTH
+DROP,	JMS 	INCSP
+	JMP	EXNV	
+
+		/ And
+ANDH,	1003
+	"A;"N;"D+1000
+	DROPH
+FAND,	JMS I	POP2	/ Note: in this program use FAND
+	TAD	REG8
+	AND	REG10
+	JMS 	PUSH
+	JMP	EXNV
+
+		/ Or
+ORH,	1002
+	"O;"R+1000
+	ANDH
+OR,	JMS I	POP2	/ Pop TOS to REG10
+	TAD	REG8
+	AND	REG10
+	CMA
+	AND	REG10
+	TAD	REG8
+	JMS	PUSH
+	JMP	EXNV
+
+		/ Plus
+PLUSH,	1001
+	"++1000
+	ORH
+PLUS,	JMS I	POP2	/ Pop TOS to REG10
+	CLL
+	TAD	REG8
+	TAD	REG10
+	JMS	PUSH
+	JMP	EXNV
+
+		/ Minus: TOS subtracted from under TOS
+MINUSH,	1001
+	"-+1000
+	PLUSH
+MINUS,	JMS I	POP2	/ Pop TOS to REG10
+	TAD	REG10
+	NEG
+	TAD	REG8
+	JMS	PUSH
+	JMP	EXNV
+
+		/ OntoR: stack to Rstack
+ONTORH,	1002
+	">;"R+1000
+	MINUSH
+ONTOR,	JMS	DECRSP	/ Make a hole in RS to put it in
+	JMS	POP
+	DCA I	RSP	/ Store the value in the hole
+	JMP	EXNV
+
+		/ ROnto: Rstack to stack
+RONTOH,	1002
+	"R;">+1000
+	ONTORH
+RONTO,	TAD I	RSP	/ Get the current entry in RS
+	DCA	POP	/ Store return in push return from POP
+	JMS 	INCRSP	/ Increment RSP to prune RS
+	TAD	POP
+	JMS	PUSH	/ Push the value onto stack
+	JMP	EXNV
+
+	/ FindAux: Addr of word at TOS
+	/  Returns address of parameter part of word or zero if not found
+
+FINDAUX, JMS	POP	/ Get the address of word
+	DCA	REG12	/ R10 & R12 point to word
+	TAD	REG12	/ R12 saves the address of the word
+	DCA	REG10	/ R10 works on it
+	CLA
+	TAD	VL	/ Last defined head in dictionary
+	DCA	REG8	/ REG8 point to dictionary
+FA1,	TAD	REG8	/ Save the start of head inn R6
+	DCA	REG6
+	TAD I	REG8	/ Get entry from dictionary
+	AND	C777	/ Get the count
+	NEG
+	TAD I	REG10	/ Get the word count
+	SZA
+	JMP	FA5B	/ Character counts didn't match
+
+			/ Compare chars in the pair of words
+FA2,	ISZ	REG8	/ Increment dictionary pointer to first char
+	ISZ	REG10	/ Increment word pointer to first char
+	CLA		/ Loop to match characters
+	TAD I	REG8	/ Fetch a char in dictionary
+	AND	C777	/ Mask out the stop bit (if there)
+	NEG
+	TAD I	REG10	/ Get the character in word		
+	SZA
+	JMP	FA5	/ They're different, skip to next dictionary word
+
+FA3,	CLA		/ They're the same - keep going
+	TAD I	REG8	/ Get the current chracter
+	AND	C1000	/ Get the stop flag
+	SNA		/ Jump to exit with word found
+	JMP	FA2	/ Keep going -  go back for the next character
+
+FA4,	ISZ	REG8	/ Found a match - exit with found
+	ISZ	REG8	/ Point R8 to Ex addr
+	CLA
+	TAD	REG8	/ Get the execution address
+	JMS	PUSH	/ Put it on the stack
+	TAD	REG6	/ Get the start of the head
+	JMS	PUSH
+	JMP	EXNV
+			/ Current word wasn't it, need to go to next word
+FA5B,	ISZ	REG8	/ Point dictionary pointer to next char if from count
+FA5,	CLA		/ Entry for working with current char
+	TAD I	REG8	/ Get the current word
+	AND	C1000	/ Get the stop flag
+	SNA		/ Jump on 0 flag to next dictionary character
+	JMP	FA5B
+			/ Current character is last in word
+	ISZ	REG8	/ Go to the next word - that's the link
+	CLA	
+	TAD I	REG8	/ Get the link to next word in dictionary
+	SNA		/ If zero were at the end of dictionary
+	JMP	FA6
+	DCA	REG8	/ Store the new link in R8
+	TAD	REG12	/ Restore the pointer to the word
+	DCA	REG10
+	JMP	FA1	/  and do it again
+
+FA6,	CLA		/ End of dictionary and we didn't find it
+	JMS	PUSH	/ Push a zero on the stack
+	JMP	EXNV
+
+		/ UStar Multiply two numbers at TOS
+USTARH,	1002
+	"U;"*+1000
+	RONTOH
+USTAR,	JMS 	POP	/ Multiplicand to MQ
+	MQL
+	JMS	POP	/ Get Multiplier
+	DCA	USTAR1	/  and store in multiplier
+	7405		/ MUY
+USTAR1,	0
+	DCA	REG10	/ Save upper part in R10
+	MQA
+	DCA	REG8	/ Lower part to R8
+	JMS I	PUSH2	/ Push R8 then R10 (upper in TOS)
+	JMP	EXNV	/ High part (TOS), low part (TOS-1)
+
+SPARE,	0
+		/ UDiv: Divide double length by TOS
+DVI=	7407
+UDIVH, 1002
+	"U;"/+1000
+	USTARH
+UDIV,	JMS 	POP	/ Divisor is at top of stack
+	DCA	REG6
+	JMS I	POP2	/ TOS (high part) in R10
+	TAD	REG8	/ Get low part
+	MQL		/  and put it in MQ
+	TAD	REG6
+	DCA	UDIV1
+	TAD	REG10	/ High part to Acc
+	DVI		/ DVI
+UDIV1,	0		/ Divisor
+	JMS	PUSH	/ Remainder to stack
+	CLA
+	MQA		/ Or in the quotient
+	JMS 	PUSH	/ Push remainder from MQ (TOS)
+	JMP	EXNV	/ Remainder (TOS), quotient (TOS-1)
+	
+		/ Zero equals: -1 to stack if TOS zero
+ZEQH,	1002
+	"0;"=+1000
+	UDIVH
+ZEQ,	JMS 	POP
+	SZA		/ Skip if zero Acc
+	ONE		/ Make it 1 if non-zero
+	NEG		/ Change 1 to -1 but leave zero unchanged
+	CMA
+	JMS 	PUSH
+	JMP	EXNV
+
+			/ (TOS-1) >= (TOS) ?
+MAXNO,	3777
+GEH,	1002
+	">;"=+1000
+	ZEQH
+GE,	JMS I	POP2	/ Low in REG8, high in REG10
+	CLA
+	TAD	REG10
+	NEG
+	TAD	REG8
+	SMA
+	JMP	GE1
+	CLA
+GE0,	JMS	PUSH
+	JMP	EXNV
+GE1,	MINUS1
+	JMP	GE0		
+
+			/ TOS = TOS-1 
+EQH,	1001
+	"=+1000
+	GEH
+EQ,	JMS I	POP2	/ TOS in R10
+	DCA	REG12	/ Store 0 in REG12
+	TAD	REG8
+	NEG
+	TAD	REG10
+	SNA
+	ISZ	REG12	/ REG12 is 1 if 0 result	
+	CLA
+	TAD	REG12	/ 1 if equal 0 if not
+	NEG
+	JMS	PUSH
+	JMP	EXNV
+	
+		/ Exit to OS8
+STOPH,	1004
+	"S;"T;"O;"P+1000
+	EQH
+STOP,	JMP I	STOPA
+STOPA,	7600
+
+		/ O.: (OhDot) print TOS in octal
+MINUS4,	7774
+C260,	260	/ Char 0
+ODOTH,	1002
+	"O;".+1000
+	STOPH
+ODOT,	CLA
+	TAD	MINUS4	
+	DCA	REG12
+	JMS	POP	/ Get the value to print to R8
+	RAL		/ Shift left into link
+	JMP	ODOT2
+ODOT1,	CLA
+	TAD	POP	/ Use Pop return for tmp
+ODOT2,	RTL		/ Cycle 3 bits into low of Acc
+	RAL
+	DCA	POP
+	TAD	POP
+	AND	C7
+	TAD	C260	/ Make it a char by adding char0
+	JMS	SEROUT
+	ISZ	REG12
+	JMP	ODOT1
+	JMP	EXNV
+
+		/ Compile word to dictionary
+COMMAH,	1001
+	",+1000
+	ODOTH
+COMMA,	JMS	POP	/ Get the value to store
+	DCA I	DP	/ Save Acc in dictionary
+	ISZ	DP	/ Update the dictionary ptr
+	JMP	EXNV
+
+		/ Increment TOS
+PLUS1H,	1002
+	"1;"++1000
+	COMMAH
+PLUS1,	JMS	POP
+	IAC
+	JMS	PUSH
+	JMP	EXNV
+
+
+		/ CMOVE: Move from bottom of source to target
+		/  TOS: count; next: target; next: source
+
+CMOVEH,	1005
+	"C;"M;"O;"V;"E+1000
+	HEREH
+CMOVE,	JMS I	POP3
+	JMS	CMOVER
+	JMP	EXNV
+
+CMOVER,	0
+	MINUS1		/ Count R12; target R10; source R8
+	TAD	REG8
+	DCA	10	/ Source
+	MINUS1
+	TAD	REG10
+	DCA	11	/ Target
+	TAD	REG12
+	NEG
+	DCA	REG12	/ -Count
+CMOVE1,	TAD I	10
+	DCA I	11
+	ISZ	REG12
+	JMP	CMOVE1
+	JMP I	CMOVER
+
+		/ Here: current dictionary pointer
+HEREH,	1004
+	"H;"E;"R;"E+1000
+	PLUS1H
+HERE,	TAD	DP	/ Enter with 0 in Acc
+	JMS	PUSH
+	JMP	EXNV
+
+		/ PAL version of TWIXT
+		/ Arg in REG12
+		/ Low, High in Rtn+1 and RTN+2
+TWIXTR,	0
+	CAL
+	TAD I	TWIXTR	/ Compare arg to low
+	ISZ	TWIXTR
+	NEG
+	TAD	REG12
+	SMA		/ Skip if Arg >= low limit
+	JMP	TWIXT3
+TWIXT1,	ISZ	TWIXTR
+TWIXT2,	CLA		/ Exit with false
+	JMP I	TWIXTR
+TWIXT3,	CAL		/ Compare to high limit
+	TAD	REG12
+	NEG
+	TAD I	TWIXTR
+	ISZ	TWIXTR
+	SPA		/ Skip if high limit >= arg
+	JMP	TWIXT2
+	MINUS1		/ Exit with true
+	JMP I	TWIXTR
+
+	/ WORDAUX: Comes from FIND and other places
+	/	TOS: fence; input area
+	/	On exit: TOS: count; destination; source
+	/	Count is zero if no word found
+	/ 	TOIN is updated with count
+
+WORDAUX, JMS I	POP2	/ Get the fence (TOS R10) and input addr(R8)
+	DCA	REG6	/ Initialize count
+WA0,	TAD I	REG8	/ If the leading char not the fence?
+	NEG
+	TAD	REG10
+	SZA
+	JMP	WA0B	/ Wasn't a blank
+	ISZ	REG8	/ Was the fence keep on going
+	JMP	WA0
+WA0B,	CLA
+	TAD	REG8	/ Save the input addr in REG12
+	DCA	REG12
+WA1,	TAD I	REG8	/ Compare char in buffer with fence
+	NEG
+	TAD	REG10
+	SNA
+	JMP	WA2	/ Found it
+	ISZ	REG8	/ Not the fence yet, go for another
+	ISZ	REG6	/ Bump the char count
+	CLA		/ Go back for another character
+	JMP	WA1
+WA2,	CLA		/ Found a word, get ready to CMOVE it 
+	TAD	REG6	/ Put the char cocunt at HERE
+	DCA I	DP
+	TAD	REG12	/ Source to stack first
+	JMS	PUSH
+	TAD 	DP	/ Then dictionary pointer
+	IAC		/ Pt the characters after the count
+	JMS	PUSH
+	TAD	REG6	/ TOS: word count for CMOVE
+	JMS	PUSH
+	TAD	SI
+	NEG
+	TAD	REG8
+	IAC		/ Point to the char after fence
+	DCA	TOIN
+	JMP	EXNV
+
+NULLH,	4001		/ High bit set means this is null
+	1000		/ 0 plus flag bit
+	CMOVEH		/ Skip over TWIXTH
+NULL,	0
+
+	/ Number: Address of word at TOS
+	/ Simplified version of number - only does octal numbers
+	/ REG6 is the character counter, REG8/10 the accumulator
+	/ REG12 is the char being added, Reg14 is the pointer to buffer
+INVALID, 4000
+C4,	4
+NUMBER,	DCA	REG8	/ Initialize result 
+	DCA	REG10	/ Accomodate a 24 bit result
+	JMS	POP	/ Get address of word
+	DCA	REG14	/ R14 is the index into the source
+	TAD I	REG14	/ Get count
+	JMS	PUSH	/   and save it on the stack
+	TAD I	REG14	/ Get the count again
+	NEG
+	DCA	REG6	/ This is the negative of the count
+NUMX1,	ISZ	REG14	/ Point to next (or first) char of number
+	TAD I	REG14	/ Character to examine
+	DCA	REG12	/ Digit to examine in R12
+	JMS I	TWIXTAUX / Check against char 0 and char 7
+	260
+	267
+	SNA
+	JMP	NUMX2	/ Wasn't a valid number
+	CLA
+	TAD	REG12
+	C7		/ Make it a digit
+	DCA	REG12	/ Save it as a digit
+	TAD	REG8	/ This is the low part of current accumulation
+	MQL
+	TAD	REG10	/ this is the high part of the result
+	7413		/ Shift AD/MQ 3 places left (get this with 2)
+	2		/ The result is AC/MQ
+	DCA	REG10	/ Save the high part of the accumulation
+	MQA		/ Get the lower part
+	CLL		/ Clear the link
+	TAD	REG12	/ Add the current digit to lower part
+	DCA	REG8	/  and save the updated accumulation
+	ISZ	REG6	/ Inc count (R6) and get another digit	
+	JMP	NUMX1
+			/ Finished
+	JMS	POP	/ Put the count in R12
+	DCA	REG12
+	TAD	REG8	/ Push the low part
+	JMS	PUSH
+	MINUS1		/ Make 4 a three
+	TAD	REG12	/ Get the count back
+	AND	C4	/ Get the high bit
+	SNA
+	JMP	EXNV
+	CLA
+	TAD	REG10
+	JMS	PUSH
+	TAD	STATE
+	SNA
+	JMP	EXNV
+NUMX2,	JMS I	POP2
+	TAD	INVALID / Wasn't a valid number, push invalid to stack
+	JMS	PUSH
+	JMP	EXNV
+
+	/ Key:
+KEYSUBH, 1003
+	"K;"E;"Y+1000
+	NULLH
+KEY,    JMS	SERIN
+	JMS	PUSH	/ Returns with 0 in Acc
+	TAD I	SP	/ Echo the character to print
+	JMS	SEROUT
+	JMP	EXNV
+	
+	/ Emit Sub:
+EMITH, 1004
+	"E;"M;"I;"T+1000
+	KEYSUBH
+EMIT,   JMS	POP	/ Get char to print
+	JMS	SEROUT
+	JMP	EXNV    / Returns with 0 n Acc  
+
+			/ Print out a space
+SPH,	1002		/  Note: Space is SP on command line
+	"S;"P+1000	/   but is spelled SPACE in assembly
+	EMITH
+SPACE,	TAD	C40
+	JMS	SEROUT
+	JMP	EXNV
+
+	/ No arguments, returns with args for CMOVE
+	/ Comes from FIND and other places
+WORD,	JMP	COLON
+	NR		/ Add TOIN to source origin
+	TOIN
+	AT
+	LDSI		/ Assume only input from TIB (stack origin)
+	PLUS
+	NR		/ Load a blank for a fence
+	FENCE
+	AT
+	WORDAUX		/ Returns arguments to move from 
+	CMOVE		/    TIB to Here in Dictionary
+	SEMIC
+
+			/ No arguments, result: param (TOS) and head addr
+FIND,	JMP	COLON
+	WORD		/ Returns address of counted text at HERE
+	UPCASE
+	HERE		/ Requires address of dictionary
+	FINDAUX		/ Returns addr of head and params
+	SEMIC
+
+
+			/ A bunch of arguments for EXPECT
+CBS,	10		/ Ctrl-h (backspace)
+MCR,	-15		/ minus CR
+MRO,	-177		/ minus backspace
+MSPACE,	-40		/ - space
+
+			/ Comes from QUIT
+			/  Input char from keyboard to TIB (stack origin)
+			/   limit to buffer size of 56 (70 octal)
+			/  No arguments - no results
+			/ places null space at end of input
+EXPECT,	TAD	C100
+	NEG
+	DCA	REG8	/ Initialize count
+	TAD	SI	/ Initialize buffer ptr to stack origin
+	DCA	REG10
+EX0,	JMS	SERIN
+	DCA	REG12	/ REG8 has the char read in
+	TAD	REG12
+	TAD	MRO	/ Compare to back space
+	SZA
+	JMP	EX1	/ Wasn't a backspace
+	TAD	REG8	/ Got BS, check if beginning of buffer
+	TAD	C100
+	SNA
+	JMP	EX0	/ Was at the beginning, just start over
+	CLA
+	TAD	CBS	/ Output a BS
+	JMS	SEROUT
+	TAD	C40
+	JMS	SEROUT
+	TAD	CBS
+	JMS	SEROUT
+	MINUS1		/ Back up the buffer pointer
+	TAD	REG10
+	DCA	REG10
+	MINUS1		/ Back up the count
+	TAD	REG8
+	DCA	REG8
+	JMP	EX0
+EX1,	CLA		/ Wasn't a BS - Check for CR
+	TAD	REG12
+	TAD	MCR	/ Negative carriage return
+	SNA
+	JMP	EX3	/ Was a CR
+			/ Check to make sure it's valid
+	JMS I	TWIXTAUX
+	40
+	172		/ 172 is lower case z
+	SNA
+	JMP	EX0
+	CLA		/ Store the character
+	TAD	REG12
+	DCA I	REG10
+	TAD	REG12	/ And echo it to output
+	JMS	SEROUT	
+	ISZ	REG10
+	ISZ	REG8	/ Check to see if at end of buffer
+	JMP	EX0	/ And go back to another
+	TAD	EXMSGA	/ Ran out of buffer
+	DCA	REG10	/ Print the "Too long" message
+	JMS I	DOTQAUX
+	TAD	SI
+	DCA	REG10
+EX3,	CLA
+	TAD	C40	/ At end store a space
+	DCA I	REG10
+	ISZ	REG10	/ then a null
+	DCA I	REG10
+	ISZ	REG10	/ And a space
+	TAD	C40
+	DCA I	REG10
+	JMP	EXNV
+EXMSGA,	EXMSG
+EXMSG,	11
+	" ;"T;"o;"o;" ;"l;"o;"n;"g
+
+CCR,	15		/ Bunch of constants for CR
+CLF,	12
+CRH,	1002
+	"C;"R+1000
+	SPH
+CR,	TAD	CCR
+	JMS	SEROUT
+	TAD	CLF
+	JMS	SEROUT
+	JMP	EXNV
+			/ Print a word whose addr is at TOS
+WDOTH,	1002
+	"W;".+1000
+	CRH
+WDOT,	JMS	POP	/ Get the addr of the word to print
+	DCA	REG10
+	JMS I	DOTQAUX	
+	JMP	EXNV
+
+EXWOSH, 1005
+	"E;"X;"W;"O;"S+1000
+	WDOTH
+EXWOS,	JMS	POP
+	DCA	EVR	/ Go to this word without incrementing IP
+	JMP I	EVR
+
+			/ Print the word following call in word
+DOTQ,	TAD	IP
+	DCA	REG10
+	JMS I	DOTQAUX	/ Returns 0 in Acc
+	TAD	REG10
+	DCA	IP
+	ISZ	IP	/ IP points to next word
+	JMP	EXNV
+
+		/ Dot Quote: Print following string
+DOTQH,	3002		/ Set immediate bit
+	".;""+1000
+	EXWOSH
+	JMP	COLON
+	LDSTATE		/ If compiling, state not 0
+	JUMPZ
+	NEWDQ1
+	NR		/ Compiling, put in call to DOTQ
+	DOTQ
+	COMMA
+NEWDQ1,	STOREAT		/ Store quote at fence
+	FENCE
+	42
+	WORD
+	LDSTATE		/ If compiling, adjust dictionary
+	JUMPZ
+	NEWDQ2	
+	INCDP
+	JUMP
+	NEWDQ3
+NEWDQ2,	LOADAT		/ Section for immediate
+	DP		/ Address to print is in DP
+	WDOT
+NEWDQ3,	STOREAT		/ Return the fence to a space
+	FENCE
+	40
+	SEMIC	
+		
+/ Print the string at REG10
+DOTQR, 0
+	TAD I	REG10	/ Count
+	C777		/ And out the high bits
+	NEG
+	DCA	REG8
+DOTQA,	ISZ	REG10
+	TAD I	REG10	/ Get the char to print
+	JMS	SEROUT	/ Returns 0 in Acc
+	ISZ	REG8
+	JMP	DOTQA
+	JMP I	DOTQR
+
+
+			/ Check for an invalid number (4000)
+VALIDN,	JMS	POP
+	CLL RAL
+	SZA
+	MINUS1		/ Non-zero in low 11 bits
+	SNL		
+	MINUS1		/ Zero in link
+	JMS	PUSH
+	JMP	EXNV
+
+NEADDR,	NE1
+NUMERR,	TAD	DP	/ Print out offending word
+	DCA	REG10
+	JMS I	DOTQAUX	/ It's at the dictionary pointer
+	TAD	C40	/ Print a space
+	JMS	SEROUT
+	TAD	NEADDR	/ Print out WHAT?
+	DCA	REG10	
+	JMS I	DOTQAUX
+NE1,	5
+	"W;"H;"A;"T;"?
+	JMP	EXNV
+
+	/ Interpreter
+INTERP, JMP COLON
+INT0,	FIND
+	DUP		/ Zero if we couldn't find it
+	JUMPZ		/ Couldn't find it - try number
+	INT3
+INT1,	AT		/ Found the word in dictionary		
+	DUP		/ Returns with head addr (TOS) and ex addr
+	JUMPMI		/ Minus at head addr means end of text
+	INT4		/ Quietly exit
+	NR		/ Dig out the immediate bit
+	2000		/ Bit 2 set means immediate
+	FAND
+	JUMPNZ		/ Not set - go execute it
+	INT2
+	LDSTATE		/ Ask if we are compiling
+	JUMPZ		
+	INT2		/ Not compiling - go execute it
+	COMMA		/ Compile the word's ex addr
+	JUMP
+	INT0		/ And go back for another word
+INT2,	EXWOS		/ Exec word on stack
+	JUMP		/ And go back for another word
+	INT0
+INT3,	DROP		/ Drop the zero we duped
+	HERE
+	NUMBER		/ Didn't find it, try number
+	DUP
+	VALIDN		/ If valid, put on the stack
+	JUMPZ		/  if zero - an invalid number
+	INT5
+	LDSTATE		/ Are we compiling?
+	JUMPZ		
+	INT0		/ Not compiling - just leave No. on stack
+	NR		/ Compile a NR address
+	NR
+	COMMA
+	COMMA		/ Then the number
+	JUMP		/ Go back for another word
+	INT0
+INT4,	DROP		/ Drop the zero duped from FIND
+	DROP		/ Drop Null's execution address
+	SEMIC
+INT5,	NUMERR
+	QUIT
+
+LDSI,	TAD	SI
+	JMS	PUSH
+	JMP	EXNV
+
+LDZERO,	JMS	PUSH
+	JMP	EXNV
+
+LDSTATE, TAD	STATE
+	JMS	PUSH
+	JMP	EXNV
+
+
+			/ QUIT: Loops calling for keyboard input
+			/ Calls EXPECT then INTERP repeatedly
+			/  executing or compiling each word from input
+QUIT,	JMP	COLON
+	INIT
+	STOREAT		/ Set STATE to immediate
+	STATE
+	0
+QUIT1,	CR	
+	DOTQ		/ Put out CR, OK message 
+	2
+	"O;"K
+QUIT2,	CR
+	LDZERO		/ Initialize buffer pointer
+	NR
+	TOIN
+	STORE
+	EXPECT		/ No arguments, no results
+	CR
+	INTERP		/ Process words up to a null
+	LDSTATE		/ If compiling, just ask for another line
+	JUMPZ		/ Zero means not compiling
+	QUIT1		/ Not compiling - put out OK message
+	JUMP
+	QUIT2		/ Compiling, ask for another line
+
+INIT,	TAD	SI
+	DCA	SP
+	TAD	RSI
+	DCA	RSP
+	JMP	EXNV
+			/ Alternate for NR xxx @
+			/ Assumes address to load follows LOADAT
+LOADAT,	TAD I	IP
+	DCA	REG8
+	TAD I	REG8
+	JMS	PUSH
+	ISZ	IP
+	JMP	EXNV
+
+			/ ?S: Prints the current status of the stack
+QSH,	1002
+	"?;"S+1000
+	DOTQH
+QSTACK,	JMP COLON
+	LOADAT		/ Get the start of the stack
+	SI
+	LOAD1		/ Load one on the stack
+	MINUS
+	LOADAT		/ Get the current stack pointer
+	SP		/ @SI @SP
+	SWAP		/ @SP @SI
+	OVER
+	OVER		/ @SP @SI @SP @SI
+	EQ
+	JUMPNZ		/ Returns true if equal		
+	QS3	
+	CR		
+QS1,	SPACE		/ @SP @S
+	DUP		/ @SP @S @S
+	AT		/ @SP @S Char				
+	ODOT		/ @SP @S
+	LOAD1		/ @SP @S 1
+	MINUS		/ @SP @S-1
+	OVER
+	OVER		/ @SP @S-1 @SP @S-1
+	EQ		/ 
+	JUMPZ		/ Jump if false
+	QS1
+	DOTQ
+	6
+	240;"(;"T;"O;"S;")
+QS2,	DROP		/ Drop the @SI and @SP
+	DROP
+	SEMIC
+QS3,	DOTQ
+	6
+	"E;"M;"P;"T;"Y;215
+	JUMP
+	QS2
+
+			/ Compiled verson of TWIXT
+			/ Arg on stack
+			/ Low and high follow call to TWIXT
+			/ See example in DEC
+TWIXT,	JMS	POP
+	DCA	REG12
+	TAD I	IP
+	DCA	.+6
+	JMS	INCIP
+	TAD I	IP
+	DCA	.+4
+	JMS	INCIP
+	JMS I	TWIXTAUX
+	0
+	0
+	JMS	PUSH
+	JMP	EXNV
+
+STODH,	1004
+	"S;"-;">;"D+1000
+	QSH
+STOD,	JMS	POP
+	DCA	REG6
+	TAD	REG6
+	JMS	PUSH	/ Push the low part
+	TAD	REG6
+	SMA
+	JMP	STOD1
+	MINUS1
+	JMP	STOD2
+STOD1,	CLA
+STOD2,	JMS	PUSH	/ Push the high part
+	JMP	EXNV
+
+DDOTH,	1002
+	"D;".+1000
+	STODH
+DDOT,	JMP	COLON
+	ODOT
+	ODOT
+	SEMIC
+
+
+
+DPLUSH,	1002
+	"D;"++1000
+	DDOTH
+DPLUS,	JMS I	POP3
+	JMS	POP	/ 8,10 as one double number
+	DCA	REG14	/ 12,14 as the other
+	CLL
+	TAD	REG10
+	TAD	REG14
+	JMS	PUSH
+	SZL
+	ONE
+	CLL
+	TAD	REG8
+	TAD	REG12
+	JMS	PUSH
+	JMP	EXNV
+
+DCOM,	JMS I	POP2
+	TAD	REG8
+	CMA
+	DCA	REG8
+	TAD	REG10
+	CMA
+	DCA	REG10
+	JMS I	PUSH2
+	JMP	EXNV
+
+DNEGH,	1004
+	"D;"N;"E;"G+1000
+	DPLUSH
+DNEG,	JMP	COLON
+	DCOM
+	LOAD1
+	LOAD0
+	DPLUS	
+	SEMIC
+			/ Print the signed double word at TOS 
+			/ DEC 123456 DNEG OVER OVER D. SP .
+			/  Gives: 77416700 -123456
+DOTH,	1001
+	".+1000
+	DNEGH
+DOT,	JMP COLON
+	DUP
+	JUMPNM
+	DOTA
+	NR	
+	55
+	EMIT
+	DNEG
+DOTA,	LOAD0
+	RROT		/ Stack: 0 al ah
+DOT1,	LOAD0		/ Divide Arg(high) by 10
+	NR
+	12
+	UDIV
+	ONTOR		/ Save qh on RS
+	NR		/ Divide rem low part by 10
+	12
+	UDIV		/ Stack: rem ql (TOS)
+	RONTO		/ Get back qh. Stack: rem ql qh (TOS)
+	ROT		/ Stack: ql qh rem
+	NR		/ Make it a printable digit
+	60
+	PLUS
+	RROT		/ Stack: 0 d1 ql qh
+	OVER
+	OVER		
+	OR
+	JUMPNZ
+	DOT1
+DOT2,	DROP		/ Stack: 0,d1,d2,ql,qh
+	DROP
+DOT3,	EMIT		/ Stack: 0,d1,d2
+	DUP
+	JUMPNZ
+	DOT3
+	DROP		/ Drop the sentinel
+	SEMIC		
+
+NEGATE,	JMS	POP
+	NEG
+	JMS	PUSH
+	JMP	EXNV
+
+			/ Load 1 on the stack
+LOAD1,	ONE
+L1A,	JMS	PUSH
+	JMP	EXNV
+			/ Load -1 on stack
+LOADM1,	MINUS1
+	JMP L1A
+			/ Load 0 on stack
+LOAD0,	JMS	PUSH
+	JMP	EXNV
+
+BCMOVE,	JMS I	POP3	/ R8 source, R10 target, R12 count
+	TAD	REG12
+	NEG
+	DCA	REG12
+BC1,	TAD I	REG8
+	DCA I	REG10
+	MINUS1
+	TAD	REG8
+	DCA	REG8
+	MINUS1
+	TAD	REG10
+	DCA	REG10
+	ISZ	REG12
+	JMP	BC1
+	JMP	EXNV
+
+CREAUX,	TAD I	DP	/ Save char count in R10
+	DCA	REG10
+	TAD I	DP	/ Add 1000 to char count
+	TAD	C1000
+	DCA I	DP
+	TAD 	REG10	/ Add 1000 to last char
+	TAD	DP	
+	DCA	REG8	/ R8 = addr of last char
+	TAD I	REG8
+	TAD	C1000
+	DCA I	REG8
+	TAD	VL	/ Add link to prior in new def
+	ISZ	REG8
+	DCA I	REG8
+	TAD	DP	/ VocLnk = DP
+	DCA	VL
+	TAD	REG8	/ DP = DP + CC + 1
+	IAC
+	DCA	DP
+	JMP	EXNV
+			/ Create Head
+CREATH,	1002
+	"C;"H+1000
+	DOTH
+CREATE,	JMP	COLON
+	FIND
+	JUMPT
+	CR1
+	CREAUX
+	SEMIC
+CR1,	DROP
+	CRX
+	DOTQ
+	6
+	240;"R;"E;"D;"E;"F
+	QUIT
+
+CRX,	TAD	DP	/ Print out offending word
+	DCA	REG10
+	JMS I	DOTQAUX	/ It's at the dictionary pointer
+	JMP	EXNV
+
+			/ Upper case word at HERE
+MLCA,	-140
+M40,	-40
+C340,	340
+UPCASE, TAD I	DP	/ Get the word count
+	NEG
+	DCA	REG8
+	TAD	DP	/ Put the DP pointer in REG10
+	DCA	REG10
+UC1,	ISZ	REG10	/ Point to the next word
+	TAD I	REG10
+	SNA		/ Leave zero alone
+	JMP	UC2
+	TAD	MLCA	/ Compare to (lower case) a
+	SMA
+	TAD	M40	/ And out the lower case bit
+	TAD	C340	/ Add in the overpunch
+	DCA I	REG10	/ Store back in dictionary
+UC2,	ISZ	REG8
+	JMP	UC1
+	JMP	EXNV
+
+COLONH,	1001
+	":+1000
+	CREATH
+	JMP	COLON
+	CREATE
+	NR
+	JMP	COLON
+	COMMA
+	TOGST
+	SEMIC
+
+SEMICH,	3001
+	";+1000		/ Set to immediate
+	COLONH
+	JMP	COLON
+	NR
+	SEMIC
+	COMMA
+	TOGST
+	INITSP
+	SEMIC
+
+INITSP, TAD	SI
+	DCA	SP
+	JMP	EXNV
+	
+FGH,	1006
+	"F;"O;"R;"G;"E;"T+1000
+	SEMICH
+FORGET,	JMP	COLON
+	FIND		/ Get the argument
+	DUP
+	JUMPZ
+	FG1
+	SWAP		/ Get the exec addr
+	LOAD1		/ Point back to link
+	MINUS
+	AT		/ Get the link
+	NR		/ Store the link in VL
+	VL
+	STORE
+	NR		/ Store the head addr in DP
+	DP	
+	STORE
+	SEMIC
+FG1,	CRX
+	DOTQ
+	6
+	240;"N;"O;"D;"E;"F
+	QUIT
+
+			/ Stack entries for DO LEAVE LOOP
+			/  and IF ELSE THEN
+			/ 
+			/ >0 IF ELSE THEN
+			/  0 LEAVE
+			/ -1 Loop-end (addr at DO)
+DOH,	3002		/ Set immediate bit
+	"D;"O+1000
+	FGH
+	JMP	COLON	
+	NR		/ Put in a call to Doaux
+	DOAUX
+	COMMA
+	HERE		/ Address of loop head to stack
+	LOAD0		/ Zero to stack to indicate position of DO
+	SEMIC
+
+DOAUX,	JMP	COLON
+	RONTO
+	RROT		/ Put return at bottom
+	ONTOR
+	ONTOR		/ Limit at top of RS
+	ONTOR		/ Put the return back
+	SEMIC
+
+LOOPH,	3004		/ Make it immediate
+	"L;"O;"O;"P+1000
+	DOH
+	JMP	COLON
+			/ Process LEAVEs and look for DO addr
+L0,	DUP		/ Is this the sentinel for the DO?
+	JUMPF
+	L3
+L1,	DUP		/ Get candidate hole addr
+	AT		/ Stack: hole addr, (hole)
+	JUMPF		/ Go because 
+	L2		/  it's a LEAVE
+	DROP		/ It was an IF-ELSE_THEN hole
+	JUMP		/ Drop current entry, go to next
+	L0
+L2,	HERE		/ Process the LEAVE hole
+	NR
+	3
+	PLUS
+	SWAP
+	STORE
+	JUMP		/ Go back looking for loop-end
+	L0
+			/ Process the loop-end
+L3,	DROP		/ Drop the sentinel
+	NR		/ Put in call to LOOPAUX
+	LOOPAUX
+	COMMA
+	NR		/ Put in a JUMPZ inst
+	JUMPZ
+	COMMA
+	COMMA		/ Put in the branch addr that's on the stack
+	SEMIC
+
+LOOPAUX, JMP	COLON
+	RONTO		/ Get the return
+	RONTO		/ This is the limit
+	RONTO		/ This is the index
+	PLUS1		/ Increment index
+	OVER
+	OVER
+	SWAP
+	GE
+	JUMPF
+	LA1
+	DROP		/ Drop the limit and index
+	DROP
+	ONTOR		/ Put the return back
+	LOAD1		/ Return true to skip out of loop
+	SEMIC
+LA1,	ONTOR		/ This is the index
+	ONTOR		/ This is the limit
+	ONTOR		/ This is the return
+	LOAD0		/ Return false to stay in loop
+	SEMIC
+	
+IH,	1001		/ Get the index off of RS
+	"I+1000
+	LOOPH
+	TAD	RSP
+	IAC
+	DCA	REG8
+	TAD I	REG8
+	JMS	PUSH
+	JMP	EXNV
+
+IETAUX,	JMP	COLON
+	LOADAT
+	SP
+IET1,	DUP
+	AT
+	AT		/ Get the value at the hole
+	PLUS1
+	JUMPF
+	IET2		/ If not -1 
+	LOAD1		/ It wasn't an IET hole
+	PLUS
+	JUMP
+	IET1
+IET2,	AT		/ Get the hole addr
+	SEMIC		/ Leave with the IET addr on stack
+
+IFH,	3002
+	"I;"F+1000
+	IH
+IF,	JMP	COLON
+	NR		/ Put in a call to JUMPZ
+	JUMPZ
+	COMMA
+	HERE		/ Addr of the hole
+	LOADM1		/ Load the hole with -1
+	COMMA		/ Make a hole
+	SEMIC
+
+ELSEH,	3004
+	"E;"L;"S;"E+1000
+	IFH
+ELSE,	JMP	COLON	/ Enters looking for hole addr
+	IETAUX		/ Get the hole addr
+	NR		/ Put in a jump before the THEN
+	JUMP
+	COMMA
+	HERE		/ Stack: IF addr, New hole addr
+	LOADM1		/ Make a hole for the JUMP
+	COMMA		/ Load the new hole with -1
+	SWAP		/ Stack: New hole addr, IF addr
+	HERE		/ Stack: New hole addr, IF addr, here
+	SWAP		/ Stack: Hole addr, here, If addr
+	STORE		/ Stack: hole addr
+	SEMIC
+
+THENH,	3004
+	"T;"H;"E;"N+1000
+	ELSEH
+THEN,	JMP	COLON	/ Enters looking for hole addr
+	IETAUX		/ Get the hole addr
+	HERE		/ Put in the addr of the JUMP
+	SWAP		/  that got us here
+	STORE
+	SEMIC	
+	
+HEAD,	TEXT	"^X EXIT, ^B CLEAR, ^N NEW LINE, ^Y DEL LINE, ^G GO, ^O INS/OVR: "
+
+			/ Get three char from pair
+			/ Addr of pair in REG14
+GET3,	0
+	TAD I	REG14	/ Get first one
+	AND	C377
+	DCA	REG8	/ Store the first one in REG8
+	TAD I	REG14	/ Get the low part of second
+	RTL
+	RTL
+	RAL
+	AND	C17
+	DCA	REG10	/ Store the low part in REG14
+	ISZ	REG14	/ Point to the high of the pair
+	TAD I	REG14
+	RTR
+	RTR
+	AND	C360
+	TAD	REG10
+	DCA	REG10	/ Store middle char in REG10
+	TAD I	REG14	/ Get the last char
+	AND	C377	/ The last char in AC
+	DCA	REG12	/ Store last in REG12
+	ISZ	REG14	/ Point REG14 to next pair
+	JMP I	GET3
+
+			/ Unpack 21 (dec) pairs (one row) of triplets
+C17,	17
+C377,	377
+C360,	360
+C7400,	7400
+SM1,	S-1
+UNPACK,	JMS	POP	/ Get the row address
+	DCA	REG14	/ Row addr in REG14
+	TAD	M25	/ Do 21 (dec) triplets
+	DCA	REG6	/ Count in REG6
+	TAD	SM1	/ Start of the text buffer-1
+	DCA	10	/ Text buffer addr in 10 autoindex
+UP1,	JMS	GET3	/ REG8, REG10 and REG12 will be the chars
+	TAD	REG8	/  in the pair at REG12
+	DCA I	10
+	TAD	REG10
+	DCA I	10
+	TAD	REG12
+	DCA I	10
+	ISZ	REG6
+	JMP	UP1
+	JMP	EXNV
+
+PRINTL,	JMS	POP	/ Get the row address
+	DCA	REG14	/ Row addr in REG14
+	TAD	M25	/ Do 21 (dec) triplets
+	DCA	REG6	/ Count in REG8
+PL1,	JMS	GET3	/ Put the triplet on the stack
+	TAD	REG8
+	JMS	SEROUT
+	TAD	REG10
+	JMS	SEROUT
+	TAD	REG12
+	JMS	SEROUT
+	ISZ	REG6
+	JMP	PL1
+	JMP	EXNV
+
+			/ Pack 21 (dec) pairs (one row) of triplets
+PACK,	JMS	POP	/ Get the row address
+	DCA	REG10
+	TAD	M25	/ Do 21 (dec) triplets
+	DCA	REG8
+	TAD	SI	/ Start of the text buffer
+	DCA	REG12
+PACK1,	TAD I	REG12	/ Get first char from text buffer
+	DCA I	REG10	/ Store it in the low part of W1
+	ISZ	REG12	/ Point to the next char in text buffer
+	TAD I	REG12	/  and get that char
+	RTR		/ Rotate the low 4 bits to high part
+	RTR
+	RAR
+	AND	C7400	/ And out the four high bits
+	TAD I	REG10
+	DCA I	REG10	/ And store the result in W1
+	ISZ	REG10	/ Go to W2
+	TAD I	REG12	/ Get the 2nd char back
+	RTL		/ Rotate the high bits left 4 places
+	RTL
+	AND	C7400
+	DCA I	REG10	/ Store it in the high 4 bits of W2	
+	ISZ	REG12	/ Point to the third char
+	TAD I	REG12	/ Get the third char
+	TAD I	REG10	/ Add it to the high bits already there
+	DCA I	REG10
+	ISZ	REG10	/ Point to next char in text buffer
+	ISZ	REG12	/ Point to next pair in packed buffer
+	ISZ	REG8
+	JMP	PACK1
+	JMP	EXNV
+
+LEAUX,	JMP	COLON
+	RONTO		/ Save the return
+	RONTO		/ Get rid of the limit and index
+	DROP
+	RONTO
+	DROP
+	ONTOR
+	SEMIC
+
+LEAVEH,	3005		/ Set immediate bit
+	"L;"E;"A;"V;"E+1000
+	THENH
+LEAVE,	JMP	COLON
+	NR
+	LEAUX
+	COMMA
+	NR
+	JUMP
+	COMMA
+	HERE		/ Address of the hole
+	LOAD0		/ Fill the hole with 0
+	COMMA
+	SEMIC
+
+TOGST,	TAD	STATE
+	CMA
+	DCA	STATE
+	JMP	EXNV
+			/ Alternative to NR arg NR addr STORE
+			/ Call: STOREAT Addr Arg
+STOREAT, TAD I	IP	/ Address of store at next word
+	DCA	REG8	
+	JMS	INCIP
+	TAD I	IP	/ Thing to store at second word
+	DCA I	REG8
+	JMS	INCIP
+	JMP	EXNV
+			/ Inc DP by inc at DP
+			/ Inc on stack
+INCDP,	TAD I	DP	/ (DP) aka char count
+	TAD	DP
+	IAC
+	DCA	DP
+	JMP	EXNV
+
+LOADRN,	TAD	ROWNO
+	JMS	PUSH
+	JMP	EXNV
+
+LOADCN,	TAD	COLNO
+	JMS	PUSH
+	JMP	EXNV
+
+M10,	-10
+LOADMRN, TAD	ROWNO
+	TAD	M10
+	JMS	PUSH
+	JMP	EXNV
+
+ROWADD,	JMP	COLON
+	LOADRN
+	NR
+	52
+	USTAR
+	DROP
+	NR
+	7000
+	PLUS
+	SEMIC
+
+PAINT,	JMP	COLON
+	DOTQ
+	4
+	33;133;62;112
+	DOTQ
+	6
+	33;133;61;73;61;110
+	NR
+	100
+	NR
+	HEAD
+	PLINE
+	PIO
+	CR
+	NR
+	-10
+	NR
+	7000		/ -Row count, buff addr (TOS)
+PAINT1,	DOTQ
+	1
+	"[
+	OVER		/ Print line from text buf?
+	LOADMRN		/ Load LineNo -10
+	EQ
+	JUMPF
+	PAINT3
+	NR		/ Print from buffer
+	-77
+	LOADAT
+	SI
+PAINT2,	DUP
+	AT
+	EMIT
+	PLUS1
+	SWAP
+	PLUS1
+	SWAP
+	OVER
+	JUMPNZ
+	PAINT2
+	DROP		/ Drop the addr and count
+	DROP
+	JUMP
+	PAINT4
+PAINT3,	DUP
+	PRINTL
+PAINT4,	DOTQ
+	1
+	"]
+	CR
+	OVER		/ Print the CLine?
+	LOADMRN		/ Load LineNo -10
+	EQ
+	JUMPF
+	PAINT6
+	LOADCN		/ Yes - print the CLine
+	PLUS1
+	NEGATE
+PAINT5,	SPACE
+	PLUS1
+	DUP
+	JUMPNZ
+	PAINT5
+	DROP
+	DOTQ
+	1
+	"^
+	CR
+PAINT6,	NR
+	52	/ Add 42 (dec) to go to next line
+	PLUS
+	SWAP
+	PLUS1
+	SWAP
+	OVER
+	JUMPNZ
+	PAINT1
+	DROP
+	DROP	
+	SEMIC
+			/ Get a char with no echo
+GETCHR,	JMS	SERIN
+	JMS	PUSH
+	JMP	EXNV
+
+LOADIO,	JMP	COLON
+	NR
+	INSOVR
+	AT
+	SEMIC
+
+GO,	JMP	COLON
+	CR
+	ROWADD
+	PACK
+	STOREAT
+	ROWNO
+	0
+GO1,	ROWADD
+	UNPACK
+	STOREAT
+	S+77
+	40
+	STOREAT
+	S+100
+	0
+	STOREAT
+	S+101
+	40
+	STOREAT
+	TOIN
+	0
+	INTERP
+	INCRN
+	LOADRN
+	NR
+	10
+	EQ
+	JUMPF
+	GO1
+	QUIT
+			/ Blank a line
+			/ Argument is row addr
+C1040,	1040
+BLANK,	JMS	POP
+	DCA	REG10
+	TAD	M25	/ Do 25 pairs
+	DCA	REG8
+BLANK1,	TAD	C40
+	DCA I	REG10
+	ISZ	REG10
+	TAD	C1040
+	DCA I	REG10
+	ISZ	REG10
+	ISZ	REG8
+	JMP	BLANK1
+	JMP	EXNV
+
+
+C77,	77
+C300,	300
+PLAUX,	0
+	AND	C77
+	DCA	REG12
+	TAD	REG12
+	TAD 	REG12
+	CMA		/ Results in either 11 or 10
+	AND	C300	/ Get the bits to add
+	TAD	REG12
+	JMS	SEROUT
+	JMP I	PLAUX
+
+PLINE,	JMS I	POP2	/ Chr count in R8, Addr in R10
+	TAD 	REG8	/ Chr count
+	CLL
+	RAR		/ Divide by two
+	NEG
+	DCA	REG8	/ (Chr count)/2
+	DCA	REG12	/ Line count
+PLINE1,	TAD I	REG10	/ Get first or next char
+	BSW		/ Put left char at right
+	JMS	PLAUX	/ Dig out char in the left part
+	TAD I	REG10	/ Now do the left part
+	JMS	PLAUX
+	ISZ	REG10
+	ISZ	REG12	/ Line count
+	ISZ	REG8
+	JMP	PLINE1
+	JMP	EXNV
+
+INCCN,	ISZ	COLNO
+	JMP	EXNV
+
+INCRN,	ISZ	ROWNO
+	JMP	EXNV
+
+PIO,	JMP	COLON
+	LOADIO
+	JUMPNM		/ Jump GE to OVR print
+	PIO1
+	DOTQ
+	3
+	"I;"N;"S
+	SEMIC
+PIO1,	DOTQ
+	3
+	"O;"V;"R
+	SEMIC
+
+EDITH,	1004
+	"E;"D;"I;"T+1000
+	LEAVEH
+EDIT,	JMP	COLON
+	STOREAT
+	COLNO
+	0
+	STOREAT
+	ROWNO
+	0
+	NR
+	7000
+	AT
+	JUMPZ
+	EDIT0A
+EDITI,	NR
+	7000
+	UNPACK
+EDIT0,	PAINT
+	GETCHR	/ Read the input	
+	DUP
+	TWIXT
+	40	/ Space
+	172	/ z
+	JUMPT
+	EDIT10
+	CHECK
+	2
+	EDIT1
+EDIT0A,	NR
+	-10
+	NR
+	7000
+EDIT0B,	DUP
+	BLANK
+	NR
+	52	/ 21 (dec) pairs
+	PLUS
+	SWAP
+	PLUS1
+	SWAP
+	OVER
+	JUMPNZ
+	EDIT0B
+	DROP
+	DROP
+	JUMP
+	EDITI
+
+EDIT1,	CHECK
+	30
+	EDIT2
+	ROWADD
+	PACK
+	QUIT
+
+EDIT2,	CHECK		/ Check for a ^O
+	17
+	EDIT3
+	LOADIO
+	NEGATE
+	NR
+	INSOVR
+	STORE
+	JUMP
+	EDIT0
+
+EDIT3,	CHECK		/ Check for arrow key
+	33
+	EDIT4
+	GETCHR		/ Get the left bracket
+	DROP		/ Drop the right bracket
+	GETCHR		/ This is the letter code: A-D
+	CR		/ Make sure the [ gets rubbed out
+	CHECK
+	101
+	EDIT3B
+	LOADRN		/ Make sure ROWNO is not 0
+	JUMPZ
+	EDIT3A		/ ROWNO is 0, just leave
+	ROWADD
+	PACK
+	LOADRN
+	LOAD1
+	MINUS
+	NR
+	ROWNO
+	STORE
+	ROWADD
+	UNPACK
+EDIT3A,	JUMP
+	EDIT0
+
+EDIT3B,	CHECK		/ Is it a B?
+	102
+	EDIT3C
+EDIT3X,	LOADRN		/ Make sure ROWNO is not 7
+	NR
+	7
+	EQ
+	JUMPT
+	EDIT3A		/ ROWNO is 7, just leave
+	ROWADD
+	PACK
+	LOADRN
+	LOAD1
+	PLUS
+	NR
+	ROWNO
+	STORE
+	ROWADD
+	UNPACK
+	JUMP
+	EDIT0
+
+EDIT3C,	CHECK		/ Is it a C?
+	103
+	EDIT3D
+	LOADCN		/ Make sure COLNO is not 63 (dec)
+	NR
+	76
+	EQ
+	JUMPT
+	EDIT3A		/ COLNO is 37, just leave
+	LOAD1
+EDIT3Y,	LOADCN
+	PLUS
+	NR
+	COLNO
+	STORE
+	JUMP
+	EDIT0
+
+EDIT3D,	CHECK		/ Is it a D?
+	104
+	EDIT3E
+	LOADCN	
+	JUMPZ		/ Make sure COLNO is not 0
+	EDIT3A		/ COLNO is 0, just leave
+EDIT3Z,	LOADCN
+	LOAD1
+	MINUS
+	NR
+	COLNO
+	STORE
+	JUMP
+	EDIT0
+EDIT3E,	DROP
+	JUMP
+	EDIT3A
+
+EDIT4,	CHECK		/ Is it a CR?
+	15
+	EDIT5
+	LOAD0
+	NR
+	COLNO
+	STORE
+	JUMP
+	EDIT3X
+
+EDIT5,	CHECK		/ Is it a BS?
+	177
+	EDIT6
+	LOADCN		/ If COLNO Zero, just exit
+	JUMPZ
+	EDIT0
+	LOADCN
+	LOADAT
+	SI
+	PLUS
+	DUP
+	LOAD1
+	MINUS
+	NR
+	77
+	LOADCN
+	MINUS
+	CMOVE
+	LOADAT
+	C40
+	NR
+	76
+	LOADAT
+	SI
+	PLUS
+	STORE
+	JUMP
+	EDIT3Z
+
+EDIT6,	CHECK		/ Is it a ^N?
+	16
+	EDIT7
+	NR		/ if row no is 7 then no move
+	7
+	LOADRN
+	EQ
+	JUMPT
+	EDIT6A
+	ROWADD
+	PACK
+	NR
+	7445		/ Source
+	NR
+	7517		/ Target
+	NR
+	7446
+	ROWADD		/ Get row addr
+	MINUS
+	BCMOVE
+EDIT6A,	ROWADD		/ Set new row to blanks
+	BLANK
+	ROWADD
+	UNPACK
+EDIT6B,	LOAD0
+	NR
+	COLNO
+	STORE
+	JUMP
+	EDIT0
+
+EDIT7,	CHECK		/ Is it a ^Y?
+	31
+	EDIT8
+	NR		/ if row no is 7 then no move
+	7
+	LOADRN
+	EQ
+	JUMPT
+	EDIT7A
+	ROWADD		/ Put the text back in packed buffer
+	PACK
+	ROWADD		/ Target
+	DUP
+	NR
+	52
+	PLUS		/ Source
+	SWAP
+	NR
+	7446
+	ROWADD		/ Get row addr
+	MINUS
+	CMOVE
+EDIT7A,	NR
+	7446
+	BLANK
+	ROWADD
+	UNPACK
+	JUMP
+	EDIT6B
+
+EDIT8,	CHECK		/ Is it a TAB?
+	11
+	EDIT9
+	NR
+	70
+	LOADCN		/ Check if gt 56
+	SWAP
+	GE
+	JUMPT
+	EDIT0
+	NR
+	6
+	JUMP
+	EDIT3Y
+
+EDIT9,	CHECK
+	07
+	EDIT3E
+	GO		/ Execute the screen
+
+			/ Process an ordinary char
+EDIT10, LOADIO		/ Load Ins/Ovr flag
+	JUMPNM		/ -1 if insert
+	EDIT11
+	LOADCN		/ Are we at end of line?
+	NR
+	77
+	EQ
+	JUMPT
+	EDIT11
+	LOADAT
+	SI
+	NR		/ Target
+	77
+	PLUS
+	DUP		/ Source
+	NR	
+	1
+	MINUS
+	SWAP
+	NR
+	77
+	LOADCN
+	MINUS
+	BCMOVE
+EDIT11,	LOADAT		/ Place char at col in text buffer
+	SI
+	LOADCN
+	PLUS
+	STORE
+	LOADCN		/ Check for end of line
+	NR
+	76
+	EQ
+	JUMPT		/ True at end of line
+	EDIT12
+	INCCN
+EDIT12,	JUMP
+	EDIT0
+
+START,	STOREAT
+	7000
+	0
+	QUIT
+
+CHECK,	TAD I	IP
+	NEG
+	TAD I	SP
+	SNA		/ Exit if equal
+	JMP	CHECK1
+	JMS	INCIP	/ Not equal, get jump addr
+	TAD I	IP
+	DCA	IP
+	JMP	EXNV
+CHECK1,	JMS	INCIP	/ Skip over the test char
+	JMS	INCIP	/ Skip over the jump addr
+	JMS	POP	/ Prune the stack
+	JMP	EXNV
+
+			/ Shift right n unsigned double
+SRNH,	1003
+	"S;"R;"N+1000
+	EDITH
+SRN,	JMS I	POP3	/ TOS in REG12, double in R8/R10
+	TAD	REG12
+	NEG
+	DCA	REG12
+SRN1,	CLL
+	TAD	REG10
+	RAR
+	DCA	REG10
+	TAD	REG8
+	RAR
+	DCA	REG8
+	ISZ	REG12
+	JMP	SRN1
+	JMS I	PUSH2
+	JMP	EXNV
+
+PICKH,	1004
+	"P;"I;"C;"K+1000
+	SRNH
+PICK,	JMS	POP
+	TAD	SP
+	DCA	REG8
+	TAD I	REG8
+	JMS	PUSH
+	JMP	EXNV
+
+CARRYH,	1005
+	"C;"A;"R;"R;"Y+1000
+	PICKH
+CARRY,	SZL		/ Link (carry) to stack
+	ONE
+	JMS	PUSH
+	JMP	EXNV
+	
+	
+	7777
+	7777
+
+S=  .+40		/ 32 words of stack should be enough
+RS= S+120		/ Input and text buffer is at bottom of RS
+DICTIONARY= RS
+
+$
