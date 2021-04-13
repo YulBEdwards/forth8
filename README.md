@@ -1,1 +1,1 @@
-# forth8
+Initial version of Forth8
