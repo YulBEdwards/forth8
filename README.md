@@ -1,1 +1,1 @@
-Initial version of Forth8
+This version of Forth was designed for the SIMH PDP-8 emulator. An EAE is assumed for multiply and divide. A screen editor (8 lines of 63 chars) is provided. The buffer (packed 3 chars per double word) for the screen editor takes three pages (7000-7577) near the end of 4K memory. Thus the Forth interpreter plus the screen buffer leaves about 1450 words for user defined Forth words (about 5½ pages).
